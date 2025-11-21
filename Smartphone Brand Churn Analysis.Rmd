@@ -1,0 +1,280 @@
+- Title: Which Phone brand would consumers churn?
+USING 2025 MOBILE REVIEWS SENTIMENT from KAGGLE
+
+```{r}
+library(rsample)
+library(dplyr)
+library(ggplot2)
+library(skimr)
+library(tidyverse)
+library(tidymodels)
+library(readr)
+```
+
+
+#loading data
+```{r}
+data <- read.csv("Mobile_Reviews_Sentiment.csv")
+```
+
+#EDA
+#summary of dataset
+```{r}
+summary(data)
+```
+
+#Checking columns
+```{r}
+colnames(data)
+```
+
+#Viewing data to check if there are any missing values
+#No missing Values in dataset
+```{r}
+skim(data)
+```
+
+
+```{r}
+ggplot(Mobile_Reviews_Sentiment) +
+  geom_bar(mapping = aes(x = brand))
+```
+
+```{r}
+Mobile_Reviews_Sentiment |>
+  count(sentiment, brand)  |>
+  arrange(desc(n))
+```
+
+#Customers sentiments on devices.
+#From The dataset,sentiment proves that Google had the most positive sentiment 
+```{r}
+prop.table(table(Mobile_Reviews_Sentiment$brand, Mobile_Reviews_Sentiment$sentiment))
+```
+
+```{r}
+round(prop.table(table(Mobile_Reviews_Sentiment$brand, Mobile_Reviews_Sentiment$sentiment)) *100,2)
+```
+
+Ploting Brand Sentiment
+```{r}
+ggplot(Mobile_Reviews_Sentiment, aes(x = brand, fill = sentiment)) +
+  geom_bar(position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+#Viewing brand rating
+```{r}
+prop.table(table(Mobile_Reviews_Sentiment$brand, Mobile_Reviews_Sentiment$rating))
+```
+#Brand rating by costumers 
+Customers who gave 1 rating rated 'Realme' scoring 1.90
+Customers who gave 2 rating rated 'Xiaomi' scoring 2.88
+Customers who gave 3 rating rated 'Samsung' scoring 3.72
+customers who gave 4 rating rated 'OnePlus' scoring 4.14
+customers who gave 4 rating rated 'Apple' and 'Realme' 2.17 tides
+
+```{r}
+round(prop.table(table(Mobile_Reviews_Sentiment$brand, Mobile_Reviews_Sentiment$rating)) *100,2)
+```
+
+#Viewing Country with brand rating
+```{r}
+prop.table(table(Mobile_Reviews_Sentiment$country, Mobile_Reviews_Sentiment$rating, Mobile_Reviews_Sentiment$brand))
+```
+#Countries brand rating
+```{r}
+round(prop.table(table(Mobile_Reviews_Sentiment$brand, Mobile_Reviews_Sentiment$rating, Mobile_Reviews_Sentiment$country)) *100,2)
+```
+#Creating a churn indicator for each customer 
+```{r}
+Mobile_Reviews_Sentiment <- Mobile_Reviews_Sentiment |>
+  arrange(customer_name, review_date) |>
+  group_by(customer_name) |>
+  mutate(previous_brand = lag(brand),
+         churn = ifelse(!is.na(previous_brand) & brand != previous_brand, 1, 0)) |>
+  ungroup()
+
+```
+
+#This line filters the dataset to include only reviews for Apple, Samsung, or Google phones
+```{r}
+df <- Mobile_Reviews_Sentiment |>
+  filter(brand %in% c("Apple", "Samsung", "Google"))
+```
+
+#electing the features for modeling.
+```{r}
+df_model <- df |>
+  select(
+    churn,
+    age, brand, model, country, verified_purchase,
+    price_usd, rating, sentiment,
+    battery_life_rating, camera_rating,
+    performance_rating, design_rating, display_rating,
+    review_length, word_count, helpful_votes
+  )
+```
+
+#preparing dataset for machine learning by converting columns to factor type.
+```{r}
+df_model$churn <- as.factor(df_model$churn)
+df_model$brand <- as.factor(df_model$brand)
+df_model$model <- as.factor(df_model$model)
+df_model$country <- as.factor(df_model$country)
+df_model$verified_purchase <- as.factor(df_model$verified_purchase)
+```
+
+#splitting dataset into training and testing sets for machine learning.
+```{r}
+set.seed(123)
+train_index <- sample(1:nrow(df_model), 0.8*nrow(df_model))
+
+train <- df_model[train_index, ]
+test  <- df_model[-train_index, ]
+```
+
+#This code train a logistic regression model to predict churn.
+```{r}
+model_log <- glm(churn ~ ., data=train, family=binomial)
+```
+
+#This code train a Random Forest model to predict churn.
+```{r}
+library(randomForest)
+model_rf <- randomForest(churn ~ ., data=train, ntree=500)
+```
+
+#This code prepares data for XGBOOST, a gradient boosting algorithm
+```{r}
+library(xgboost)
+train_x <- model.matrix(churn ~ . - 1, train)
+train_y <- as.numeric(train$churn) - 1
+
+test_x <- model.matrix(churn ~ . - 1, test)
+test_y <- as.numeric(test$churn) - 1
+```
+
+#making predictions with logistic regression model and converting them to binary labels.
+```{r}
+pred_log <- ifelse(predict(model_log, test, type="response") > 0.5, 1, 0)
+```
+
+#making predictions with Random Forest model.
+```{r}
+pred_rf <- predict(model_rf, newdata = test)
+```
+
+```{r}
+pred_rf <- predict(model_rf, test)
+```
+
+#converting factor columns into numeric values within dataset.
+```{r}
+df_model[] <- lapply(df_model, function(x) {
+  if(is.factor(x)) as.numeric(x) else x
+})
+```
+
+#This code trains an XGBoost model for binary classification.
+```{r}
+model_xgb <- xgboost(
+  data = train_x,
+  label = train_y,
+  objective = "binary:logistic",
+  nrounds = 200,
+  max_depth = 6,
+  eta = 0.1
+)
+```
+
+```{r}
+model_xgb
+```
+
+#preparing the test dataset for XGBoost prediction.
+```{r}
+test_x <- model.matrix(churn ~ . - 1, test)
+test_y <- as.numeric(test$churn) - 1
+```
+
+```{r}
+exists("test_x")
+exists("test_y")
+```
+
+```{r}
+pred_xgb <- predict(model_xgb, test_x)
+pred_xgb <- ifelse(pred_xgb > 0.5, 1, 0)
+```
+
+#evaluates model using a confusion matrix.
+```{r}
+library(caret)
+confusionMatrix(as.factor(pred_rf), test$churn)
+```
+
+#calculates churn rates by brand.
+```{r}
+df |>
+  group_by(brand) |> 
+  summarise(churn_rate = mean(churn)) |> 
+  arrange(desc(churn_rate))
+```
+
+#This code creates a human-readable churn percentage.
+```{r}
+brand_churn <- brand_churn |>
+  mutate(churn_percent = round(churn_rate * 100, 2))
+```
+
+
+#This code calculates brand-wise churn rates and formats them for display.
+```{r}
+brand_churn <- df |> 
+  filter(brand %in% c("Apple", "Samsung", "Google")) |> 
+  group_by(brand) |>
+  summarise(churn_rate = mean(churn)) |> 
+  mutate(churn_percent = paste0(round(churn_rate * 100, 2), "%")) |> 
+  arrange(desc(churn_rate))
+
+brand_churn
+```
+
+#scales package,is used to format numbers, percentages, dates, and labels in plots and tables.
+```{r}
+library(scales)
+```
+
+
+#this code creates a small data frame summarizing churn rates by brand.
+```{r}
+churn_summary <- data.frame(
+  brand = c("Apple", "Samsung", "Google"),
+  churn_rate = c(0.07166853, 0.07090187, 0.06676804)
+)
+```
+
+#This code adds a human-readable percentage column to your churn_summary data frame.
+```{r}
+churn_summary$churn_percent <- scales::percent(churn_summary$churn_rate)
+```
+
+
+#This code creates a bar chart showing churn rates by brand with percentages on top.
+```{r}
+ggplot(churn_summary, aes(x = brand, y = churn_rate, fill = brand)) +
+  geom_bar(stat = "identity", width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = churn_percent), vjust = -0.4, size = 4) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Churn Rate by Phone Brand",
+    x = "Brand",
+    y = "Churn Rate"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(face = "bold", size = 10),
+    axis.text.y = element_text(size = 10)
+  )
+```
